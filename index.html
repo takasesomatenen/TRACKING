@@ -1,30 +1,7 @@
-<!DOCTYPE html>
-<html>
-<head>
-  <meta charset="utf-8">
-  <title>Face & Hand Tracer</title>
-  <script src="https://cdn.jsdelivr.net/npm/@mediapipe/hands/hands.js" crossorigin="anonymous"></script>
-  <script src="https://cdn.jsdelivr.net/npm/@mediapipe/face_mesh/face_mesh.js" crossorigin="anonymous"></script>
-  <script src="https://cdn.jsdelivr.net/npm/@mediapipe/drawing_utils/drawing_utils.js" crossorigin="anonymous"></script>
-  <script src="https://cdn.jsdelivr.net/npm/@mediapipe/camera_utils/camera_utils.js" crossorigin="anonymous"></script>
-
-  <style>
-    body { margin: 0; background: #000; overflow: hidden; display: flex; justify-content: center; align-items: center; height: 100vh; }
-    canvas { transform: scaleX(-1); /* 鏡合わせにする */ }
-    video { display: none; }
-  </style>
-</head>
-
-<body>
-  <video id="input_video"></video>
-  <canvas id="output_canvas"></canvas>
-
-  <script type="module">
-    const videoElement = document.getElementById('input_video');
+const videoElement = document.getElementById('input_video');
     const canvasElement = document.getElementById('output_canvas');
     const canvasCtx = canvasElement.getContext('2d');
 
-    // 画面サイズ設定
     function resizeCanvas() {
       canvasElement.width = window.innerWidth;
       canvasElement.height = window.innerHeight;
@@ -36,7 +13,7 @@
       canvasCtx.save();
       canvasCtx.clearRect(0, 0, canvasElement.width, canvasElement.height);
       
-      // 背景にカメラ映像を描画（必要なければ消してOK）
+      // カメラ映像を描画
       canvasCtx.drawImage(results.image, 0, 0, canvasElement.width, canvasElement.height);
 
       // 手の描画
@@ -47,31 +24,38 @@
         }
       }
 
-      // 顔の描画（Face Mesh）
+      // 顔の描画（ここが動くようになります）
       if (results.multiFaceLandmarks) {
         for (const landmarks of results.multiFaceLandmarks) {
+          // 顔全体のメッシュ
           drawConnectors(canvasCtx, landmarks, FACEMESH_TESSELATION, {color: '#C0C0C070', lineWidth: 1});
-          drawConnectors(canvasCtx, landmarks, FACEMESH_RIGHT_EYE, {color: '#FF3030'});
-          drawConnectors(canvasCtx, landmarks, FACEMESH_LEFT_EYE, {color: '#30FF30'});
+          // 目と口の強調
+          drawConnectors(canvasCtx, landmarks, FACEMESH_RIGHT_EYE, {color: '#FF3030', lineWidth: 2});
+          drawConnectors(canvasCtx, landmarks, FACEMESH_LEFT_EYE, {color: '#30FF30', lineWidth: 2});
+          drawConnectors(canvasCtx, landmarks, FACEMESH_LIPS, {color: '#E0E0E0', lineWidth: 2});
         }
       }
       canvasCtx.restore();
     }
 
-    // 手の検出設定
+    // 手の初期化
     const hands = new Hands({locateFile: (file) => `https://cdn.jsdelivr.net/npm/@mediapipe/hands/${file}`});
     hands.setOptions({ maxNumHands: 2, modelComplexity: 1, minDetectionConfidence: 0.5, minTrackingConfidence: 0.5 });
     hands.onResults(onResults);
 
-    // カメラの起動
+    // 顔の初期化（これを追加！）
+    const faceMesh = new FaceMesh({locateFile: (file) => `https://cdn.jsdelivr.net/npm/@mediapipe/face_mesh/${file}`});
+    faceMesh.setOptions({ maxNumFaces: 1, refineLandmarks: true, minDetectionConfidence: 0.5, minTrackingConfidence: 0.5 });
+    faceMesh.onResults(onResults);
+
+    // カメラループ
     const camera = new Camera(videoElement, {
       onFrame: async () => {
+        // 両方のモデルに画像を送信する
         await hands.send({image: videoElement});
+        await faceMesh.send({image: videoElement});
       },
       width: 1280,
       height: 720
     });
     camera.start();
-  </script>
-</body>
-</html>
