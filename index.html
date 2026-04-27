@@ -2,20 +2,20 @@
 <html lang="ja">
 <head>
   <meta charset="utf-8">
-  <title>Multi-User Noise Tracker</title>
+  <title>Ambient Gesture Instrument</title>
   <script src="https://cdn.jsdelivr.net/npm/@mediapipe/hands/hands.js" crossorigin="anonymous"></script>
   <script src="https://cdn.jsdelivr.net/npm/@mediapipe/face_mesh/face_mesh.js" crossorigin="anonymous"></script>
   <script src="https://cdn.jsdelivr.net/npm/@mediapipe/drawing_utils/drawing_utils.js" crossorigin="anonymous"></script>
   <script src="https://cdn.jsdelivr.net/npm/@mediapipe/camera_utils/camera_utils.js" crossorigin="anonymous"></script>
   <style>
     body { margin: 0; background: #000; overflow: hidden; display: flex; justify-content: center; align-items: center; height: 100vh; cursor: pointer; }
-    canvas { transform: scaleX(-1); max-width: 100%; max-height: 100%; object-fit: contain; }
+    canvas { transform: scaleX(-1); max-width: 100%; max-height: 100%; }
     video { display: none; }
-    #msg { position: absolute; color: white; font-family: sans-serif; pointer-events: none; opacity: 0.8; text-align: center; background: rgba(0,0,0,0.5); padding: 20px; border-radius: 10px; }
+    #msg { position: absolute; color: white; font-family: 'Helvetica Neue', Arial, sans-serif; pointer-events: none; text-align: center; letter-spacing: 0.2em; }
   </style>
 </head>
 <body>
-  <div id="msg"><h2>Multi-User Mode</h2>Click to Start Audio<br>(カメラ負荷に注意)</div>
+  <div id="msg"><h2>AMBIENT SESSION</h2>CLICK TO BEGIN</div>
   <video id="input_video"></video>
   <canvas id="output_canvas"></canvas>
 
@@ -26,34 +26,60 @@
 
     let lastHandResults = null;
     let lastFaceResults = null;
-    
-    // 複数人の前回の顔位置（鼻の頭）を保存する配列
-    let prevNosePositions = []; 
-    
-    // --- Audio Setup (前回と同じ) ---
+    let prevIndexY = 0;
+
+    // --- Audio Engine ---
     let audioCtx = null;
-    let gainNode = null;
-    const baseVolume = 0.01; // 多人数用にベースは少し下げる
+    let mainGain = null;
 
     function initAudio() {
       if (audioCtx) return;
       audioCtx = new (window.AudioContext || window.webkitAudioContext)();
-      const bufferSize = 2 * audioCtx.sampleRate;
-      const noiseBuffer = audioCtx.createBuffer(1, bufferSize, audioCtx.sampleRate);
-      const output = noiseBuffer.getChannelData(0);
-      for (let i = 0; i < bufferSize; i++) { output[i] = Math.random() * 2 - 1; }
-      const whiteNoise = audioCtx.createBufferSource();
-      whiteNoise.buffer = noiseBuffer;
-      whiteNoise.loop = true;
-      gainNode = audioCtx.createGain();
-      gainNode.gain.value = baseVolume;
-      whiteNoise.connect(gainNode);
-      gainNode.connect(audioCtx.destination);
-      whiteNoise.start();
+      mainGain = audioCtx.createGain();
+      mainGain.connect(audioCtx.destination);
       document.getElementById('msg').style.display = 'none';
     }
-
     window.addEventListener('click', initAudio);
+
+    // 1. マレット音（人差し指トントン）
+    function playMallet(freq = 440) {
+      const osc = audioCtx.createOscillator();
+      const gain = audioCtx.createGain();
+      osc.type = 'sine';
+      osc.frequency.setValueAtTime(freq, audioCtx.currentTime);
+      
+      gain.gain.setValueAtTime(0, audioCtx.currentTime);
+      gain.gain.linearRampToValueAtTime(0.2, audioCtx.currentTime + 0.05); // Attack
+      gain.gain.exponentialRampToValueAtTime(0.001, audioCtx.currentTime + 0.8); // Decay
+      
+      osc.connect(gain);
+      gain.connect(mainGain);
+      osc.start();
+      osc.stop(audioCtx.currentTime + 1.0);
+    }
+
+    // 2. コーラスシンセ（仰ぐ動き）用
+    let synthNodes = [];
+    function updateSynth(intensity) {
+      if (!audioCtx || !mainGain) return;
+      if (synthNodes.length === 0) {
+        const freqs = [220, 275, 330, 440]; // 和音
+        freqs.forEach(f => {
+          const osc = audioCtx.createOscillator();
+          const g = audioCtx.createGain();
+          osc.type = 'triangle';
+          osc.frequency.value = f;
+          g.gain.value = 0;
+          osc.connect(g);
+          g.connect(mainGain);
+          osc.start();
+          synthNodes.push(g);
+        });
+      }
+      synthNodes.forEach(g => {
+        g.gain.setTargetAtTime(intensity * 0.1, audioCtx.currentTime, 0.2); // Smooth Attack/Decay
+      });
+    }
 
     function resizeCanvas() {
       canvasElement.width = window.innerWidth;
@@ -62,92 +88,66 @@
     window.addEventListener('resize', resizeCanvas);
     resizeCanvas();
 
-    // 描画ループ
     function draw() {
       canvasCtx.save();
       canvasCtx.clearRect(0, 0, canvasElement.width, canvasElement.height);
       
-      // 背景描画（白黒フィルター）
       const img = lastHandResults?.image || lastFaceResults?.image;
       if (img) {
-        canvasCtx.filter = 'grayscale(100%)';
+        canvasCtx.filter = 'grayscale(100%) brightness(0.6)';
         canvasCtx.drawImage(img, 0, 0, canvasElement.width, canvasElement.height);
-        canvasCtx.filter = 'none'; // フィルター解除
+        canvasCtx.filter = 'none';
       }
 
-      // --- 手の描画（大量対応） ---
       if (lastHandResults && lastHandResults.multiHandLandmarks) {
-        // 全ての手をループして描画
+        let totalFanMovement = 0;
+        
         for (const landmarks of lastHandResults.multiHandLandmarks) {
-          drawConnectors(canvasCtx, landmarks, HAND_CONNECTIONS, {color: '#00FF00', lineWidth: 3}); // 線を少し細く
-          drawLandmarks(canvasCtx, landmarks, {color: '#FF0000', lineWidth: 1, radius: 2}); // 点も小さく
-        }
-      }
+          // --- ジェスチャー1: 人差し指トントン ---
+          const indexTipY = landmarks[8].y;
+          if (prevIndexY - indexTipY > 0.05) { // 急な上への動き
+            playMallet(440 + (1 - indexTipY) * 400);
+          }
+          prevIndexY = indexTipY;
 
-      // --- 顔の描画と「全体の動き」の計算 ---
-      if (lastFaceResults && lastFaceResults.multiFaceLandmarks) {
-        let totalMovement = 0;
-        const currentNosePositions = [];
-
-        // 全員の顔をループ
-        for (let i = 0; i < lastFaceResults.multiFaceLandmarks.length; i++) {
-          const landmarks = lastFaceResults.multiFaceLandmarks[i];
-          const nose = landmarks[1]; // 鼻の頭
-          currentNosePositions.push({x: nose.x, y: nose.y});
-
-          // この顔の動きを計算
-          if (prevNosePositions[i]) {
-            const dx = nose.x - prevNosePositions[i].x;
-            const dy = nose.y - prevNosePositions[i].y;
-            totalMovement += Math.sqrt(dx*dx + dy*dy);
+          // --- ジェスチャー2: 指パラパラ ---
+          // 指の第2関節と先端の距離の合計で「開き具合」を見る
+          const fingerGap = Math.abs(landmarks[8].x - landmarks[12].x) + Math.abs(landmarks[12].x - landmarks[16].x);
+          if (fingerGap > 0.2 && audioCtx) {
+             // パラパラ音（簡易的に高音マレットをランダムに鳴らす）
+             if(Math.random() > 0.9) playMallet(1200 + Math.random() * 800);
           }
 
-          // 顔メッシュを描画
-          drawConnectors(canvasCtx, landmarks, FACEMESH_TESSELATION, {color: '#C0C0C050', lineWidth: 1}); // メッシュを薄く
-          drawConnectors(canvasCtx, landmarks, FACEMESH_RIGHT_EYE, {color: '#FF3030', lineWidth: 2});
-          drawConnectors(canvasCtx, landmarks, FACEMESH_LEFT_EYE, {color: '#30FF30', lineWidth: 2});
-          // FACEMESH_LIPS は負荷軽減のため割愛
-        }
+          // --- ジェスチャー3: 仰ぐ（手のひら全体の動き） ---
+          totalFanMovement += Math.abs(landmarks[0].x - 0.5); // 画面端に行くほど強く
 
-        // 音量の更新（全員の動きの合計）
-        if (gainNode) {
-          const targetGain = baseVolume + (totalMovement * 2.0); // 感度調整
-          // 急激な音量変化を避けるためのスムージング
-          gainNode.gain.setTargetAtTime(Math.min(targetGain, 0.5), audioCtx.currentTime, 0.1);
+          drawConnectors(canvasCtx, landmarks, HAND_CONNECTIONS, {color: '#00FFCC', lineWidth: 4});
+          drawLandmarks(canvasCtx, landmarks, {color: '#FF00CC', lineWidth: 1, radius: 2});
         }
-        
-        // 現在の位置を次回のために保存
-        prevNosePositions = currentNosePositions;
+        updateSynth(Math.min(totalFanMovement, 1.0));
+      } else {
+        updateSynth(0); // 手がなくなれば消音
       }
-      
+
+      if (lastFaceResults && lastFaceResults.multiFaceLandmarks) {
+        for (const landmarks of lastFaceResults.multiFaceLandmarks) {
+          drawConnectors(canvasCtx, landmarks, FACEMESH_TESSELATION, {color: '#FFFFFF30', lineWidth: 1});
+        }
+      }
       canvasCtx.restore();
       requestAnimationFrame(draw);
     }
 
-    // --- MediaPipe 設定の多人数化 ---
-    const maxTargets = 10; // 顔と手の最大検知数
-
     const hands = new Hands({locateFile: (file) => `https://cdn.jsdelivr.net/npm/@mediapipe/hands/${file}`});
-    hands.setOptions({ 
-      maxNumHands: maxTargets, // ★大量の手に対応
-      modelComplexity: 1, // 負荷軽減のため複雑度は1
-      minDetectionConfidence: 0.5, 
-      minTrackingConfidence: 0.5 
-    });
+    hands.setOptions({ maxNumHands: 2, modelComplexity: 1, minDetectionConfidence: 0.7, minTrackingConfidence: 0.7 });
     hands.onResults(results => { lastHandResults = results; });
 
     const faceMesh = new FaceMesh({locateFile: (file) => `https://cdn.jsdelivr.net/npm/@mediapipe/face_mesh/${file}`});
-    faceMesh.setOptions({ 
-      maxNumFaces: maxTargets, // ★複数人の顔に対応
-      refineLandmarks: false, // 負荷軽減のためランドマークの精細化はOFF
-      minDetectionConfidence: 0.5, 
-      minTrackingConfidence: 0.5 
-    });
+    faceMesh.setOptions({ maxNumFaces: 1, minDetectionConfidence: 0.7 });
     faceMesh.onResults(results => { lastFaceResults = results; });
 
     const camera = new Camera(videoElement, {
       onFrame: async () => {
-        // ここがボトルネックになるので注意
         await hands.send({image: videoElement});
         await faceMesh.send({image: videoElement});
       },
