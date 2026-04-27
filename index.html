@@ -2,18 +2,20 @@
 <html lang="ja">
 <head>
   <meta charset="utf-8">
-  <title>Face & Hand Tracer (B&W Background)</title>
+  <title>Face Noise Tracker</title>
   <script src="https://cdn.jsdelivr.net/npm/@mediapipe/hands/hands.js" crossorigin="anonymous"></script>
   <script src="https://cdn.jsdelivr.net/npm/@mediapipe/face_mesh/face_mesh.js" crossorigin="anonymous"></script>
   <script src="https://cdn.jsdelivr.net/npm/@mediapipe/drawing_utils/drawing_utils.js" crossorigin="anonymous"></script>
   <script src="https://cdn.jsdelivr.net/npm/@mediapipe/camera_utils/camera_utils.js" crossorigin="anonymous"></script>
   <style>
-    body { margin: 0; background: #000; overflow: hidden; display: flex; justify-content: center; align-items: center; height: 100vh; }
+    body { margin: 0; background: #000; overflow: hidden; display: flex; justify-content: center; align-items: center; height: 100vh; cursor: pointer; }
     canvas { transform: scaleX(-1); max-width: 100%; max-height: 100%; }
     video { display: none; }
+    #msg { position: absolute; color: white; font-family: sans-serif; pointer-events: none; opacity: 0.5; }
   </style>
 </head>
 <body>
+  <div id="msg">Click to Start Audio</div>
   <video id="input_video"></video>
   <canvas id="output_canvas"></canvas>
 
@@ -24,6 +26,39 @@
 
     let lastHandResults = null;
     let lastFaceResults = null;
+    let prevFaceLandmarks = null;
+    
+    // --- Audio Setup ---
+    let audioCtx = null;
+    let gainNode = null;
+    const baseVolume = 0.02; // 動きがない時の薄いノイズ量
+
+    function initAudio() {
+      if (audioCtx) return;
+      audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+      
+      // ホワイトノイズの生成
+      const bufferSize = 2 * audioCtx.sampleRate;
+      const noiseBuffer = audioCtx.createBuffer(1, bufferSize, audioCtx.sampleRate);
+      const output = noiseBuffer.getChannelData(0);
+      for (let i = 0; i < bufferSize; i++) {
+        output[i] = Math.random() * 2 - 1;
+      }
+
+      const whiteNoise = audioCtx.createBufferSource();
+      whiteNoise.buffer = noiseBuffer;
+      whiteNoise.loop = true;
+
+      gainNode = audioCtx.createGain();
+      gainNode.gain.value = baseVolume;
+
+      whiteNoise.connect(gainNode);
+      gainNode.connect(audioCtx.destination);
+      whiteNoise.start();
+      document.getElementById('msg').style.display = 'none';
+    }
+
+    window.addEventListener('click', initAudio);
 
     function resizeCanvas() {
       canvasElement.width = window.innerWidth;
@@ -32,26 +67,18 @@
     window.addEventListener('resize', resizeCanvas);
     resizeCanvas();
 
-    // 描画処理
     function draw() {
       canvasCtx.save();
       canvasCtx.clearRect(0, 0, canvasElement.width, canvasElement.height);
       
       const img = lastHandResults?.image || lastFaceResults?.image;
       if (img) {
-        // --- ここで背景を白黒にする設定 ---
-        // 描画コンテキスト全体にグレースケールフィルターを適用
         canvasCtx.filter = 'grayscale(100%)';
-        
-        // 白黒になったカメラ映像を描画
         canvasCtx.drawImage(img, 0, 0, canvasElement.width, canvasElement.height);
-        
-        // --- ここでフィルターを解除 ---
-        // これ以降のトラッキング線は元の色で描画される
         canvasCtx.filter = 'none';
       }
 
-      // 手を描画（元の色のまま）
+      // 手の描画
       if (lastHandResults && lastHandResults.multiHandLandmarks) {
         for (const landmarks of lastHandResults.multiHandLandmarks) {
           drawConnectors(canvasCtx, landmarks, HAND_CONNECTIONS, {color: '#00FF00', lineWidth: 5});
@@ -59,21 +86,33 @@
         }
       }
 
-      // 顔を描画（元の色のまま）
+      // 顔の描画と動きの計算
       if (lastFaceResults && lastFaceResults.multiFaceLandmarks) {
-        for (const landmarks of lastFaceResults.multiFaceLandmarks) {
-          drawConnectors(canvasCtx, landmarks, FACEMESH_TESSELATION, {color: '#C0C0C070', lineWidth: 1});
-          drawConnectors(canvasCtx, landmarks, FACEMESH_RIGHT_EYE, {color: '#FF3030', lineWidth: 2});
-          drawConnectors(canvasCtx, landmarks, FACEMESH_LEFT_EYE, {color: '#30FF30', lineWidth: 2});
-          drawConnectors(canvasCtx, landmarks, FACEMESH_LIPS, {color: '#E0E0E0', lineWidth: 2});
+        const landmarks = lastFaceResults.multiFaceLandmarks[0];
+        
+        if (prevFaceLandmarks && gainNode) {
+          // 鼻の頭（index 1）の移動距離を計算
+          const dx = landmarks[1].x - prevFaceLandmarks[1].x;
+          const dy = landmarks[1].y - prevFaceLandmarks[1].y;
+          const distance = Math.sqrt(dx*dx + dy*dy);
+          
+          // 動きに応じて音量を変化（感度は 5.0 の部分で調整）
+          const targetGain = baseVolume + (distance * 5.0);
+          gainNode.gain.setTargetAtTime(Math.min(targetGain, 0.3), audioCtx.currentTime, 0.1);
+        }
+        prevFaceLandmarks = landmarks;
+
+        for (const faceLandmarks of lastFaceResults.multiFaceLandmarks) {
+          drawConnectors(canvasCtx, faceLandmarks, FACEMESH_TESSELATION, {color: '#C0C0C070', lineWidth: 1});
+          drawConnectors(canvasCtx, faceLandmarks, FACEMESH_RIGHT_EYE, {color: '#FF3030', lineWidth: 2});
+          drawConnectors(canvasCtx, faceLandmarks, FACEMESH_LEFT_EYE, {color: '#30FF30', lineWidth: 2});
+          drawConnectors(canvasCtx, faceLandmarks, FACEMESH_LIPS, {color: '#E0E0E0', lineWidth: 2});
         }
       }
       canvasCtx.restore();
-      
       requestAnimationFrame(draw);
     }
 
-    // MediaPipe設定
     const hands = new Hands({locateFile: (file) => `https://cdn.jsdelivr.net/npm/@mediapipe/hands/${file}`});
     hands.setOptions({ maxNumHands: 2, modelComplexity: 1, minDetectionConfidence: 0.5, minTrackingConfidence: 0.5 });
     hands.onResults(results => { lastHandResults = results; });
@@ -87,10 +126,8 @@
         await hands.send({image: videoElement});
         await faceMesh.send({image: videoElement});
       },
-      width: 1280,
-      height: 720
+      width: 1280, height: 720
     });
-    
     camera.start();
     draw();
   </script>
