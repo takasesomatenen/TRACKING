@@ -2,7 +2,7 @@
 <html lang="ja">
 <head>
   <meta charset="utf-8">
-  <title>Face & Hand Tracer Full</title>
+  <title>Face & Hand Tracer (B&W Background)</title>
   <script src="https://cdn.jsdelivr.net/npm/@mediapipe/hands/hands.js" crossorigin="anonymous"></script>
   <script src="https://cdn.jsdelivr.net/npm/@mediapipe/face_mesh/face_mesh.js" crossorigin="anonymous"></script>
   <script src="https://cdn.jsdelivr.net/npm/@mediapipe/drawing_utils/drawing_utils.js" crossorigin="anonymous"></script>
@@ -22,7 +22,6 @@
     const canvasElement = document.getElementById('output_canvas');
     const canvasCtx = canvasElement.getContext('2d');
 
-    // 最新の結果を保持する変数
     let lastHandResults = null;
     let lastFaceResults = null;
 
@@ -33,18 +32,26 @@
     window.addEventListener('resize', resizeCanvas);
     resizeCanvas();
 
-    // 描画だけを担当する関数
+    // 描画処理
     function draw() {
       canvasCtx.save();
       canvasCtx.clearRect(0, 0, canvasElement.width, canvasElement.height);
       
-      // カメラ映像を描画（どちらかの結果から画像を取得）
       const img = lastHandResults?.image || lastFaceResults?.image;
       if (img) {
+        // --- ここで背景を白黒にする設定 ---
+        // 描画コンテキスト全体にグレースケールフィルターを適用
+        canvasCtx.filter = 'grayscale(100%)';
+        
+        // 白黒になったカメラ映像を描画
         canvasCtx.drawImage(img, 0, 0, canvasElement.width, canvasElement.height);
+        
+        // --- ここでフィルターを解除 ---
+        // これ以降のトラッキング線は元の色で描画される
+        canvasCtx.filter = 'none';
       }
 
-      // 手を描画
+      // 手を描画（元の色のまま）
       if (lastHandResults && lastHandResults.multiHandLandmarks) {
         for (const landmarks of lastHandResults.multiHandLandmarks) {
           drawConnectors(canvasCtx, landmarks, HAND_CONNECTIONS, {color: '#00FF00', lineWidth: 5});
@@ -52,7 +59,7 @@
         }
       }
 
-      // 顔を描画
+      // 顔を描画（元の色のまま）
       if (lastFaceResults && lastFaceResults.multiFaceLandmarks) {
         for (const landmarks of lastFaceResults.multiFaceLandmarks) {
           drawConnectors(canvasCtx, landmarks, FACEMESH_TESSELATION, {color: '#C0C0C070', lineWidth: 1});
@@ -63,11 +70,10 @@
       }
       canvasCtx.restore();
       
-      // 次のフレームでまた描画
       requestAnimationFrame(draw);
     }
 
-    // 各モデルは結果を変数に入れるだけにする
+    // MediaPipe設定
     const hands = new Hands({locateFile: (file) => `https://cdn.jsdelivr.net/npm/@mediapipe/hands/${file}`});
     hands.setOptions({ maxNumHands: 2, modelComplexity: 1, minDetectionConfidence: 0.5, minTrackingConfidence: 0.5 });
     hands.onResults(results => { lastHandResults = results; });
@@ -86,7 +92,7 @@
     });
     
     camera.start();
-    draw(); // 描画ループを開始
+    draw();
   </script>
 </body>
 </html>
