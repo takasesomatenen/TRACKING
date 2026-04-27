@@ -1,7 +1,46 @@
-const videoElement = document.getElementById('input_video');
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+  <meta charset="utf-8">
+  <title>Face & Hand Tracking</title>
+  
+  <script src="https://cdn.jsdelivr.net/npm/@mediapipe/hands/hands.js" crossorigin="anonymous"></script>
+  <script src="https://cdn.jsdelivr.net/npm/@mediapipe/face_mesh/face_mesh.js" crossorigin="anonymous"></script>
+  <script src="https://cdn.jsdelivr.net/npm/@mediapipe/drawing_utils/drawing_utils.js" crossorigin="anonymous"></script>
+  <script src="https://cdn.jsdelivr.net/npm/@mediapipe/camera_utils/camera_utils.js" crossorigin="anonymous"></script>
+
+  <style>
+    body {
+      margin: 0;
+      background: #000;
+      overflow: hidden;
+      display: flex;
+      justify-content: center;
+      align-items: center;
+      height: 100vh;
+    }
+    canvas {
+      transform: scaleX(-1); /* 鏡合わせ（ミラー）表示 */
+      max-width: 100%;
+      max-height: 100%;
+      object-fit: contain;
+    }
+    video {
+      display: none;
+    }
+  </style>
+</head>
+
+<body>
+  <video id="input_video"></video>
+  <canvas id="output_canvas"></canvas>
+
+  <script type="module">
+    const videoElement = document.getElementById('input_video');
     const canvasElement = document.getElementById('output_canvas');
     const canvasCtx = canvasElement.getContext('2d');
 
+    // キャンバスを画面いっぱいにリサイズ
     function resizeCanvas() {
       canvasElement.width = window.innerWidth;
       canvasElement.height = window.innerHeight;
@@ -9,49 +48,65 @@ const videoElement = document.getElementById('input_video');
     window.addEventListener('resize', resizeCanvas);
     resizeCanvas();
 
+    // 描画処理のメイン関数
     function onResults(results) {
       canvasCtx.save();
       canvasCtx.clearRect(0, 0, canvasElement.width, canvasElement.height);
       
-      // カメラ映像を描画
+      // カメラ映像を背景として描画
       canvasCtx.drawImage(results.image, 0, 0, canvasElement.width, canvasElement.height);
 
-      // 手の描画
+      // --- 手の描画 ---
       if (results.multiHandLandmarks) {
         for (const landmarks of results.multiHandLandmarks) {
           drawConnectors(canvasCtx, landmarks, HAND_CONNECTIONS, {color: '#00FF00', lineWidth: 5});
-          drawLandmarks(canvasCtx, landmarks, {color: '#FF0000', lineWidth: 2});
+          drawLandmarks(canvasCtx, landmarks, {color: '#FF0000', lineWidth: 1});
         }
       }
 
-      // 顔の描画（ここが動くようになります）
+      // --- 顔の描画 ---
       if (results.multiFaceLandmarks) {
         for (const landmarks of results.multiFaceLandmarks) {
-          // 顔全体のメッシュ
+          // 顔全体の網目
           drawConnectors(canvasCtx, landmarks, FACEMESH_TESSELATION, {color: '#C0C0C070', lineWidth: 1});
-          // 目と口の強調
+          // 右目
           drawConnectors(canvasCtx, landmarks, FACEMESH_RIGHT_EYE, {color: '#FF3030', lineWidth: 2});
+          // 左目
           drawConnectors(canvasCtx, landmarks, FACEMESH_LEFT_EYE, {color: '#30FF30', lineWidth: 2});
+          // 眉毛
+          drawConnectors(canvasCtx, landmarks, FACEMESH_RIGHT_EYEBROW, {color: '#FF3030', lineWidth: 2});
+          drawConnectors(canvasCtx, landmarks, FACEMESH_LEFT_EYEBROW, {color: '#30FF30', lineWidth: 2});
+          // 唇
           drawConnectors(canvasCtx, landmarks, FACEMESH_LIPS, {color: '#E0E0E0', lineWidth: 2});
         }
       }
       canvasCtx.restore();
     }
 
-    // 手の初期化
+    // 手のトラッキング設定
     const hands = new Hands({locateFile: (file) => `https://cdn.jsdelivr.net/npm/@mediapipe/hands/${file}`});
-    hands.setOptions({ maxNumHands: 2, modelComplexity: 1, minDetectionConfidence: 0.5, minTrackingConfidence: 0.5 });
+    hands.setOptions({
+      maxNumHands: 2,
+      modelComplexity: 1,
+      minDetectionConfidence: 0.5,
+      minTrackingConfidence: 0.5
+    });
     hands.onResults(onResults);
 
-    // 顔の初期化（これを追加！）
+    // 顔のトラッキング設定
     const faceMesh = new FaceMesh({locateFile: (file) => `https://cdn.jsdelivr.net/npm/@mediapipe/face_mesh/${file}`});
-    faceMesh.setOptions({ maxNumFaces: 1, refineLandmarks: true, minDetectionConfidence: 0.5, minTrackingConfidence: 0.5 });
+    faceMesh.setOptions({
+      maxNumFaces: 1,
+      refineLandmarks: true,
+      minDetectionConfidence: 0.5,
+      minTrackingConfidence: 0.5
+    });
     faceMesh.onResults(onResults);
 
-    // カメラループ
+    // カメラの起動とループ処理
     const camera = new Camera(videoElement, {
       onFrame: async () => {
-        // 両方のモデルに画像を送信する
+        // 画像を両方のエンジンに送信
         await hands.send({image: videoElement});
         await faceMesh.send({image: videoElement});
       },
@@ -59,3 +114,6 @@ const videoElement = document.getElementById('input_video');
       height: 720
     });
     camera.start();
+  </script>
+</body>
+</html>
