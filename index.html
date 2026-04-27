@@ -2,7 +2,7 @@
 <html lang="ja">
 <head>
   <meta charset="utf-8">
-  <title>Ambient Gesture Instrument</title>
+  <title>Inter-Hand String Visualizer</title>
   <script src="https://cdn.jsdelivr.net/npm/@mediapipe/hands/hands.js" crossorigin="anonymous"></script>
   <script src="https://cdn.jsdelivr.net/npm/@mediapipe/face_mesh/face_mesh.js" crossorigin="anonymous"></script>
   <script src="https://cdn.jsdelivr.net/npm/@mediapipe/drawing_utils/drawing_utils.js" crossorigin="anonymous"></script>
@@ -11,11 +11,9 @@
     body { margin: 0; background: #000; overflow: hidden; display: flex; justify-content: center; align-items: center; height: 100vh; cursor: pointer; }
     canvas { transform: scaleX(-1); max-width: 100%; max-height: 100%; }
     video { display: none; }
-    #msg { position: absolute; color: white; font-family: 'Helvetica Neue', Arial, sans-serif; pointer-events: none; text-align: center; letter-spacing: 0.2em; }
   </style>
 </head>
 <body>
-  <div id="msg"><h2>AMBIENT SESSION</h2>CLICK TO BEGIN</div>
   <video id="input_video"></video>
   <canvas id="output_canvas"></canvas>
 
@@ -26,59 +24,31 @@
 
     let lastHandResults = null;
     let lastFaceResults = null;
-    let prevIndexY = 0;
 
-    // --- Audio Engine ---
+    // --- Audio Engine (前回のまま保持) ---
     let audioCtx = null;
     let mainGain = null;
-
     function initAudio() {
       if (audioCtx) return;
       audioCtx = new (window.AudioContext || window.webkitAudioContext)();
       mainGain = audioCtx.createGain();
       mainGain.connect(audioCtx.destination);
-      document.getElementById('msg').style.display = 'none';
     }
     window.addEventListener('click', initAudio);
 
-    // 1. マレット音（人差し指トントン）
     function playMallet(freq = 440) {
+      if(!audioCtx) return;
       const osc = audioCtx.createOscillator();
       const gain = audioCtx.createGain();
       osc.type = 'sine';
       osc.frequency.setValueAtTime(freq, audioCtx.currentTime);
-      
       gain.gain.setValueAtTime(0, audioCtx.currentTime);
-      gain.gain.linearRampToValueAtTime(0.2, audioCtx.currentTime + 0.05); // Attack
-      gain.gain.exponentialRampToValueAtTime(0.001, audioCtx.currentTime + 0.8); // Decay
-      
+      gain.gain.linearRampToValueAtTime(0.2, audioCtx.currentTime + 0.05);
+      gain.gain.exponentialRampToValueAtTime(0.001, audioCtx.currentTime + 0.8);
       osc.connect(gain);
       gain.connect(mainGain);
       osc.start();
       osc.stop(audioCtx.currentTime + 1.0);
-    }
-
-    // 2. コーラスシンセ（仰ぐ動き）用
-    let synthNodes = [];
-    function updateSynth(intensity) {
-      if (!audioCtx || !mainGain) return;
-      if (synthNodes.length === 0) {
-        const freqs = [220, 275, 330, 440]; // 和音
-        freqs.forEach(f => {
-          const osc = audioCtx.createOscillator();
-          const g = audioCtx.createGain();
-          osc.type = 'triangle';
-          osc.frequency.value = f;
-          g.gain.value = 0;
-          osc.connect(g);
-          g.connect(mainGain);
-          osc.start();
-          synthNodes.push(g);
-        });
-      }
-      synthNodes.forEach(g => {
-        g.gain.setTargetAtTime(intensity * 0.1, audioCtx.currentTime, 0.2); // Smooth Attack/Decay
-      });
     }
 
     function resizeCanvas() {
@@ -94,46 +64,51 @@
       
       const img = lastHandResults?.image || lastFaceResults?.image;
       if (img) {
-        canvasCtx.filter = 'grayscale(100%) brightness(0.6)';
+        canvasCtx.filter = 'grayscale(100%) brightness(0.4)';
         canvasCtx.drawImage(img, 0, 0, canvasElement.width, canvasElement.height);
         canvasCtx.filter = 'none';
       }
 
+      // --- 左右の指を繋ぐロジック ---
+      if (lastHandResults && lastHandResults.multiHandLandmarks && lastHandResults.multiHandLandmarks.length >= 2) {
+        let leftHand = null;
+        let rightHand = null;
+
+        // 左右の手を特定
+        lastHandResults.multiHandedness.forEach((handedness, index) => {
+          if (handedness.label === 'Left') leftHand = lastHandResults.multiHandLandmarks[index];
+          if (handedness.label === 'Right') rightHand = lastHandResults.multiHandLandmarks[index];
+        });
+
+        if (leftHand && rightHand) {
+          canvasCtx.lineWidth = 1;
+          canvasCtx.strokeStyle = 'rgba(255, 255, 255, 0.6)';
+          
+          // 全ての関節（0〜20）をループして、左右の同じ点を線で結ぶ
+          for (let i = 0; i < 21; i++) {
+            canvasCtx.beginPath();
+            canvasCtx.moveTo(leftHand[i].x * canvasElement.width, leftHand[i].y * canvasElement.height);
+            canvasCtx.lineTo(rightHand[i].x * canvasElement.width, rightHand[i].y * canvasElement.height);
+            canvasCtx.stroke();
+          }
+        }
+      }
+
+      // 通常の手の描画
       if (lastHandResults && lastHandResults.multiHandLandmarks) {
-        let totalFanMovement = 0;
-        
         for (const landmarks of lastHandResults.multiHandLandmarks) {
-          // --- ジェスチャー1: 人差し指トントン ---
-          const indexTipY = landmarks[8].y;
-          if (prevIndexY - indexTipY > 0.05) { // 急な上への動き
-            playMallet(440 + (1 - indexTipY) * 400);
-          }
-          prevIndexY = indexTipY;
-
-          // --- ジェスチャー2: 指パラパラ ---
-          // 指の第2関節と先端の距離の合計で「開き具合」を見る
-          const fingerGap = Math.abs(landmarks[8].x - landmarks[12].x) + Math.abs(landmarks[12].x - landmarks[16].x);
-          if (fingerGap > 0.2 && audioCtx) {
-             // パラパラ音（簡易的に高音マレットをランダムに鳴らす）
-             if(Math.random() > 0.9) playMallet(1200 + Math.random() * 800);
-          }
-
-          // --- ジェスチャー3: 仰ぐ（手のひら全体の動き） ---
-          totalFanMovement += Math.abs(landmarks[0].x - 0.5); // 画面端に行くほど強く
-
-          drawConnectors(canvasCtx, landmarks, HAND_CONNECTIONS, {color: '#00FFCC', lineWidth: 4});
+          drawConnectors(canvasCtx, landmarks, HAND_CONNECTIONS, {color: '#00FFCC', lineWidth: 2});
           drawLandmarks(canvasCtx, landmarks, {color: '#FF00CC', lineWidth: 1, radius: 2});
         }
-        updateSynth(Math.min(totalFanMovement, 1.0));
-      } else {
-        updateSynth(0); // 手がなくなれば消音
       }
 
+      // 顔の描画
       if (lastFaceResults && lastFaceResults.multiFaceLandmarks) {
         for (const landmarks of lastFaceResults.multiFaceLandmarks) {
-          drawConnectors(canvasCtx, landmarks, FACEMESH_TESSELATION, {color: '#FFFFFF30', lineWidth: 1});
+          drawConnectors(canvasCtx, landmarks, FACEMESH_TESSELATION, {color: '#FFFFFF20', lineWidth: 1});
         }
       }
+
       canvasCtx.restore();
       requestAnimationFrame(draw);
     }
