@@ -2,9 +2,8 @@
 <html lang="ja">
 <head>
   <meta charset="utf-8">
-  <title>Minimalist Hand String Visualizer</title>
+  <title>Hands Only - Minimalist Tracker</title>
   <script src="https://cdn.jsdelivr.net/npm/@mediapipe/hands/hands.js" crossorigin="anonymous"></script>
-  <script src="https://cdn.jsdelivr.net/npm/@mediapipe/face_mesh/face_mesh.js" crossorigin="anonymous"></script>
   <script src="https://cdn.jsdelivr.net/npm/@mediapipe/drawing_utils/drawing_utils.js" crossorigin="anonymous"></script>
   <script src="https://cdn.jsdelivr.net/npm/@mediapipe/camera_utils/camera_utils.js" crossorigin="anonymous"></script>
   <style>
@@ -23,9 +22,8 @@
     const canvasCtx = canvasElement.getContext('2d');
 
     let lastHandResults = null;
-    let lastFaceResults = null;
 
-    // --- Audio Engine (保持) ---
+    // --- Audio Engine (継続保持) ---
     let audioCtx = null;
     let mainGain = null;
     function initAudio() {
@@ -47,11 +45,10 @@
       canvasCtx.save();
       canvasCtx.clearRect(0, 0, canvasElement.width, canvasElement.height);
       
-      const img = lastHandResults?.image || lastFaceResults?.image;
-      if (img) {
+      if (lastHandResults && lastHandResults.image) {
         // 背景を暗めの白黒に設定
         canvasCtx.filter = 'grayscale(100%) brightness(0.3)';
-        canvasCtx.drawImage(img, 0, 0, canvasElement.width, canvasElement.height);
+        canvasCtx.drawImage(lastHandResults.image, 0, 0, canvasElement.width, canvasElement.height);
         canvasCtx.filter = 'none';
       }
 
@@ -66,7 +63,7 @@
         });
 
         if (leftHand && rightHand) {
-          canvasCtx.lineWidth = 0.5; // 左右を繋ぐ線はあえて極細に
+          canvasCtx.lineWidth = 0.5;
           canvasCtx.strokeStyle = 'rgba(255, 255, 255, 0.4)';
           for (let i = 0; i < 21; i++) {
             canvasCtx.beginPath();
@@ -80,19 +77,8 @@
       // --- 手のトラッキング（白に統一） ---
       if (lastHandResults && lastHandResults.multiHandLandmarks) {
         for (const landmarks of lastHandResults.multiHandLandmarks) {
-          // 骨格の線
           drawConnectors(canvasCtx, landmarks, HAND_CONNECTIONS, {color: '#FFFFFF', lineWidth: 2});
-          // 関節の点
           drawLandmarks(canvasCtx, landmarks, {color: '#FFFFFF', lineWidth: 1, radius: 2});
-        }
-      }
-
-      // --- 顔のトラッキング（薄い白に設定） ---
-      if (lastFaceResults && lastFaceResults.multiFaceLandmarks) {
-        for (const landmarks of lastFaceResults.multiFaceLandmarks) {
-          drawConnectors(canvasCtx, landmarks, FACEMESH_TESSELATION, {color: 'rgba(255, 255, 255, 0.15)', lineWidth: 1});
-          drawConnectors(canvasCtx, landmarks, FACEMESH_RIGHT_EYE, {color: 'rgba(255, 255, 255, 0.5)', lineWidth: 1});
-          drawConnectors(canvasCtx, landmarks, FACEMESH_LEFT_EYE, {color: 'rgba(255, 255, 255, 0.5)', lineWidth: 1});
         }
       }
 
@@ -104,14 +90,9 @@
     hands.setOptions({ maxNumHands: 2, modelComplexity: 1, minDetectionConfidence: 0.7, minTrackingConfidence: 0.7 });
     hands.onResults(results => { lastHandResults = results; });
 
-    const faceMesh = new FaceMesh({locateFile: (file) => `https://cdn.jsdelivr.net/npm/@mediapipe/face_mesh/${file}`});
-    faceMesh.setOptions({ maxNumFaces: 1, minDetectionConfidence: 0.7 });
-    faceMesh.onResults(results => { lastFaceResults = results; });
-
     const camera = new Camera(videoElement, {
       onFrame: async () => {
         await hands.send({image: videoElement});
-        await faceMesh.send({image: videoElement});
       },
       width: 1280, height: 720
     });
