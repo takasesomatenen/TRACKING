@@ -2,7 +2,7 @@
 <html lang="ja">
 <head>
   <meta charset="utf-8">
-  <title>Inter-Hand String Visualizer</title>
+  <title>Minimalist Hand String Visualizer</title>
   <script src="https://cdn.jsdelivr.net/npm/@mediapipe/hands/hands.js" crossorigin="anonymous"></script>
   <script src="https://cdn.jsdelivr.net/npm/@mediapipe/face_mesh/face_mesh.js" crossorigin="anonymous"></script>
   <script src="https://cdn.jsdelivr.net/npm/@mediapipe/drawing_utils/drawing_utils.js" crossorigin="anonymous"></script>
@@ -25,7 +25,7 @@
     let lastHandResults = null;
     let lastFaceResults = null;
 
-    // --- Audio Engine (前回のまま保持) ---
+    // --- Audio Engine (保持) ---
     let audioCtx = null;
     let mainGain = null;
     function initAudio() {
@@ -35,21 +35,6 @@
       mainGain.connect(audioCtx.destination);
     }
     window.addEventListener('click', initAudio);
-
-    function playMallet(freq = 440) {
-      if(!audioCtx) return;
-      const osc = audioCtx.createOscillator();
-      const gain = audioCtx.createGain();
-      osc.type = 'sine';
-      osc.frequency.setValueAtTime(freq, audioCtx.currentTime);
-      gain.gain.setValueAtTime(0, audioCtx.currentTime);
-      gain.gain.linearRampToValueAtTime(0.2, audioCtx.currentTime + 0.05);
-      gain.gain.exponentialRampToValueAtTime(0.001, audioCtx.currentTime + 0.8);
-      osc.connect(gain);
-      gain.connect(mainGain);
-      osc.start();
-      osc.stop(audioCtx.currentTime + 1.0);
-    }
 
     function resizeCanvas() {
       canvasElement.width = window.innerWidth;
@@ -64,27 +49,25 @@
       
       const img = lastHandResults?.image || lastFaceResults?.image;
       if (img) {
-        canvasCtx.filter = 'grayscale(100%) brightness(0.4)';
+        // 背景を暗めの白黒に設定
+        canvasCtx.filter = 'grayscale(100%) brightness(0.3)';
         canvasCtx.drawImage(img, 0, 0, canvasElement.width, canvasElement.height);
         canvasCtx.filter = 'none';
       }
 
-      // --- 左右の指を繋ぐロジック ---
+      // --- 左右の指を繋ぐ線 (String) ---
       if (lastHandResults && lastHandResults.multiHandLandmarks && lastHandResults.multiHandLandmarks.length >= 2) {
         let leftHand = null;
         let rightHand = null;
 
-        // 左右の手を特定
         lastHandResults.multiHandedness.forEach((handedness, index) => {
           if (handedness.label === 'Left') leftHand = lastHandResults.multiHandLandmarks[index];
           if (handedness.label === 'Right') rightHand = lastHandResults.multiHandLandmarks[index];
         });
 
         if (leftHand && rightHand) {
-          canvasCtx.lineWidth = 1;
-          canvasCtx.strokeStyle = 'rgba(255, 255, 255, 0.6)';
-          
-          // 全ての関節（0〜20）をループして、左右の同じ点を線で結ぶ
+          canvasCtx.lineWidth = 0.5; // 左右を繋ぐ線はあえて極細に
+          canvasCtx.strokeStyle = 'rgba(255, 255, 255, 0.4)';
           for (let i = 0; i < 21; i++) {
             canvasCtx.beginPath();
             canvasCtx.moveTo(leftHand[i].x * canvasElement.width, leftHand[i].y * canvasElement.height);
@@ -94,18 +77,22 @@
         }
       }
 
-      // 通常の手の描画
+      // --- 手のトラッキング（白に統一） ---
       if (lastHandResults && lastHandResults.multiHandLandmarks) {
         for (const landmarks of lastHandResults.multiHandLandmarks) {
-          drawConnectors(canvasCtx, landmarks, HAND_CONNECTIONS, {color: '#00FFCC', lineWidth: 2});
-          drawLandmarks(canvasCtx, landmarks, {color: '#FF00CC', lineWidth: 1, radius: 2});
+          // 骨格の線
+          drawConnectors(canvasCtx, landmarks, HAND_CONNECTIONS, {color: '#FFFFFF', lineWidth: 2});
+          // 関節の点
+          drawLandmarks(canvasCtx, landmarks, {color: '#FFFFFF', lineWidth: 1, radius: 2});
         }
       }
 
-      // 顔の描画
+      // --- 顔のトラッキング（薄い白に設定） ---
       if (lastFaceResults && lastFaceResults.multiFaceLandmarks) {
         for (const landmarks of lastFaceResults.multiFaceLandmarks) {
-          drawConnectors(canvasCtx, landmarks, FACEMESH_TESSELATION, {color: '#FFFFFF20', lineWidth: 1});
+          drawConnectors(canvasCtx, landmarks, FACEMESH_TESSELATION, {color: 'rgba(255, 255, 255, 0.15)', lineWidth: 1});
+          drawConnectors(canvasCtx, landmarks, FACEMESH_RIGHT_EYE, {color: 'rgba(255, 255, 255, 0.5)', lineWidth: 1});
+          drawConnectors(canvasCtx, landmarks, FACEMESH_LEFT_EYE, {color: 'rgba(255, 255, 255, 0.5)', lineWidth: 1});
         }
       }
 
